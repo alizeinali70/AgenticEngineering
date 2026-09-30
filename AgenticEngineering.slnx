@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+  </Folder>
+  <Project Path="AgenticEngineering.Api/AgenticEngineering.Api.csproj" />
+  <Project Path="AgenticEngineering.Application/AgenticEngineering.Application.csproj" />
+  <Project Path="AgenticEngineering.Domain/AgenticEngineering.Domain.csproj" />
+  <Project Path="AgenticEngineering.Infrustructure/AgenticEngineering.Infrustructure.csproj" />
+  <Project Path="AgenticEngineering.UI/AgenticEngineering.UI.csproj" />
+</Solution>

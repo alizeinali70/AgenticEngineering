@@ -1,0 +1,402 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@inject HttpClient Http
+@using AgenticEngineering.Domain.Ai
+@using AgenticEngineering.UI.DTOs
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+<PageTitle>Ollama AI Assistant Workspace</PageTitle>
+
+<head>
+    <link rel="stylesheet" href="homepage.css" />
+</head>
+
+<div class="ai-dashboard">
+    <!-- Header Status Bar -->
+    <header class="dashboard-header">
+        <div class="brand">
+            <div class="brand-icon">⚡</div>
+            <div>
+                <h1>Ollama Agent Workspace</h1>
+                <span class="subtitle">Autonomous Local LLM Workspace & Code Explorer</span>
+            </div>
+        </div>
+        <div class="status-pill @(isAiRunning ? "online" : "offline")">
+            <span class="status-dot"></span>
+            <span class="status-text">@(isAiRunning ? "Ollama Online" : "Ollama Offline")</span>
+        </div>
+    </header>
+
+    <!-- Main Split Layout Container -->
+    <div class="dashboard-split-body">
+
+        <!-- =================== LEFT SIDE: WORKSPACE & FILES =================== -->
+        <aside class="workspace-sidebar">
+            <div class="sidebar-section">
+                <h3>📁 Project Workspace</h3>
+
+                <!-- Project Name Label Card -->
+                <div class="workspace-card">
+                    <span class="card-label">Active Project</span>
+                    <div class="project-name-badge">
+                        @(!string.IsNullOrEmpty(projectName) ? projectName : "Loading project...")
+                    </div>
+                </div>
+
+                <!-- Files ComboBox Card -->
+                <div class="workspace-card">
+                    <label for="projectFilesCombo" class="card-label">Project Files</label>
+                    <select id="projectFilesCombo" class="project-select" @bind="selectedFile" @bind:after="OnFileSelected">
+                        <option value="">-- Select a file to inspect --</option>
+                        @foreach (var file in projectFiles)
+                        {
+                            <option value="@file">@file</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <!-- Future Comparison Section Stub -->
+            <div class="sidebar-section comparison-section-stub">
+                <h3>⚖️ Code Comparison</h3>
+                <div class="workspace-card comparison-card">
+                    <p class="stub-description">Ready for future diff implementation between current code and new project variations.</p>
+                    <button class="btn-stub-action" disabled>Compare Implementations</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- =================== RIGHT SIDE: CHAT WITH AGENT =================== -->
+        <main class="chat-main-panel">
+            <div class="workspace-container">
+                @if (messages.Count == 0 && !isSubmitting)
+                {
+                    <div class="welcome-banner">
+                        <h2>How can I help you today?</h2>
+                        <p>Type a prompt below or upload files to analyze code, run tasks, or query your local Ollama models instantly.</p>
+
+                        <div class="suggestion-chips">
+                            <button class="chip" @onclick='() => SetPrompt("Summarize the key principles of clean architecture.")'>
+                                ✨ Clean Architecture
+                            </button>
+                            <button class="chip" @onclick='() => SetPrompt("Write a C# snippet for a thread-safe singleton pattern.")'>
+                                💻 C# Singleton
+                            </button>
+                            <button class="chip" @onclick='() => SetPrompt("Explain quantum computing in three simple bullet points.")'>
+                                🚀 Quantum Computing
+                            </button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="chat-stream" @ref="chatStreamRef">
+                        @foreach (var msg in messages)
+                        {
+                            <div class="message-bubble @(msg.Role == "user" ? "user-message" : "assistant-message")">
+                                <div class="avatar @(msg.Role == "assistant" ? "ai" : "")">
+                                    @(msg.Role == "user" ? "You" : "AI")
+                                </div>
+                                <div class="content markdown-body">
+                                    @msg.Content
+                                </div>
+                            </div>
+                        }
+
+                        @if (isSubmitting)
+                        {
+                            <div class="message-bubble assistant-message loading">
+                                <div class="avatar ai">AI</div>
+                                <div class="content">
+                                    <div class="typing-indicator">
+                                        <span></span><span></span><span></span>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <!-- Input Footer Form -->
+            <footer class="input-footer">
+                <form @onsubmit="SendTask" class="input-form">
+                    @if (attachedFiles.Count > 0)
+                    {
+                        <div class="file-badges-container" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;">
+                            @foreach (var file in attachedFiles)
+                            {
+                                <div class="file-badge">
+                                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+                                    <span>@file.Name</span>
+                                    <button type="button" class="remove-file-btn" @onclick="() => RemoveAttachedFile(file)" title="Remove file">&times;</button>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    <div class="textarea-wrapper">
+                        <InputFile id="fileInput"
+                                   OnChange="HandleFileSelected"
+                                   accept=".cs,.razor,.cshtml,.html,.css,.js,.ts,.json,.xml,.yaml,.yml,.md,.txt,.sln,.csproj"
+                                   multiple
+                                   style="display:none;" />
+
+                        <label for="fileInput" class="attach-btn" title="Upload files">
+                            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                        </label>
+
+                        <textarea @bind="promptText"
+                                  @bind:event="oninput"
+                                  placeholder="Message Ollama Agent or analyze workspace files... (Press Enter to send, Shift+Enter for new line)"
+                                  rows="1"
+                                  @onkeydown="HandleKeyDown"
+                                  disabled="@isSubmitting">
+                        </textarea>
+
+                        <button type="submit" class="send-btn" disabled="@(isSubmitting || (string.IsNullOrWhiteSpace(promptText) && attachedFiles.Count == 0))">
+                            @if (isSubmitting)
+                            {
+                                <svg class="spinner" viewBox="0 0 50 50">
+                                    <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+                                </svg>
+                            }
+                            else
+                            {
+                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                            }
+                        </button>
+                    </div>
+                </form>
+                <div class="footer-note">Ollama runs locally on your machine. Data privacy guaranteed.</div>
+            </footer>
+        </main>
+    </div>
+</div>
+
+@code {
+    private bool _isInitialized;
+    private bool isAiRunning;
+    private bool isSubmitting;
+    private string promptText = string.Empty;
+
+    // Multi-file attachment support
+    private class AttachedFileItem
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+    }
+    private List<AttachedFileItem> attachedFiles = new();
+
+    private List<ChatMessageModel> messages = new();
+    private ElementReference chatStreamRef;
+
+    // Workspace & Project state variables
+    private string projectName = "Loading...";
+    private List<string> projectFiles = new();
+    private string selectedFile = string.Empty;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_isInitialized)
+        {
+            _isInitialized = true;
+
+            // 1. Check Ollama Health
+            try
+            {
+                isAiRunning = await Http.GetFromJsonAsync<bool>("api/health");
+            }
+            catch
+            {
+                isAiRunning = false;
+            }
+
+            // 2. Load Workspace Data
+            await LoadWorkspaceMetadataAsync();
+
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadWorkspaceMetadataAsync()
+    {
+        try
+        {
+            var workspaceInfo = await Http.GetFromJsonAsync<WorkspaceDetailsDto>("api/workspace/details");
+            if (workspaceInfo != null)
+            {
+                projectName = workspaceInfo.ProjectName;
+                projectFiles = workspaceInfo.Files ?? new();
+            }
+        }
+        catch
+        {
+            projectName = "No project selected";
+            projectFiles = new List<string> { "No files available" };
+        }
+    }
+
+    private async Task OnFileSelected()
+    {
+        if (string.IsNullOrEmpty(selectedFile)) return;
+
+        // Prevent duplicate file additions
+        if (attachedFiles.Any(f => f.Name == selectedFile))
+        {
+            selectedFile = string.Empty;
+            return;
+        }
+
+        try
+        {
+            var response = await Http.GetAsync("api/workspace/read-project-file?path=" + Uri.EscapeDataString(selectedFile));
+
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+
+                attachedFiles.Add(new AttachedFileItem
+                {
+                    Name = selectedFile,
+                    Content = content
+                });
+
+                if (string.IsNullOrEmpty(promptText))
+                {
+                    promptText = "Please review and modify the selected project files:";
+                }
+
+                selectedFile = string.Empty; // Reset dropdown selection for future picks
+                StateHasChanged();
+            }
+            else
+            {
+                promptText = $"Error loading content for file: {selectedFile} ({response.StatusCode})";
+            }
+        }
+        catch (Exception ex)
+        {
+            promptText = $"Exception loading file: {ex.Message}";
+        }
+    }
+
+    private void SetPrompt(string sampleText)
+    {
+        promptText = sampleText;
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        foreach (var file in e.GetMultipleFiles(maximumFileCount: 10))
+        {
+            if (attachedFiles.Any(f => f.Name == file.Name)) continue;
+
+            try
+            {
+                using var stream = file.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024); // 2MB limit per file
+                using var reader = new StreamReader(stream);
+                var content = await reader.ReadToEndAsync();
+
+                attachedFiles.Add(new AttachedFileItem
+                {
+                    Name = file.Name,
+                    Content = content
+                });
+            }
+            catch (Exception)
+            {
+                // Handle read error if necessary
+            }
+        }
+        StateHasChanged();
+    }
+
+    private void RemoveAttachedFile(AttachedFileItem fileItem)
+    {
+        attachedFiles.Remove(fileItem);
+        StateHasChanged();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendTask();
+        }
+    }
+
+    private async Task SendTask()
+    {
+        if ((string.IsNullOrWhiteSpace(promptText) && attachedFiles.Count == 0) || isSubmitting)
+            return;
+
+        var currentPrompt = promptText.Trim();
+        string fullMessageContent = currentPrompt;
+
+        if (attachedFiles.Count > 0)
+        {
+            var fileSections = new System.Text.StringBuilder();
+            foreach (var file in attachedFiles)
+            {
+                fileSections.AppendLine($"\n\n--- Attached File: {file.Name} ---\n{file.Content}\n----------------------------------");
+            }
+
+            fullMessageContent = string.IsNullOrEmpty(currentPrompt)
+                ? $"Please review the attached files:{fileSections}"
+                : $"{currentPrompt}{fileSections}";
+        }
+
+        promptText = string.Empty;
+        var sentFilesCount = attachedFiles.Count;
+        attachedFiles.Clear();
+
+        isSubmitting = true;
+
+        string displayContent = string.IsNullOrEmpty(currentPrompt)
+            ? $"📄 Attached {sentFilesCount} file(s)"
+            : currentPrompt + (sentFilesCount > 0 ? $" (with {sentFilesCount} attached file(s))" : "");
+
+        messages.Add(new ChatMessageModel { Role = "user", Content = displayContent });
+        StateHasChanged();
+        await ScrollToBottom();
+
+        try
+        {
+            messages[^1].Content = fullMessageContent;
+            var requestPayload = new { Messages = messages };
+            var response = await Http.PostAsJsonAsync("api/ollamatask/chat", requestPayload);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var resultObj = await response.Content.ReadFromJsonAsync<ChatResponseModel>();
+                string aiReply = resultObj?.Result ?? "Received empty response.";
+                messages.Add(new ChatMessageModel { Role = "assistant", Content = aiReply });
+            }
+            else
+            {
+                messages.Add(new ChatMessageModel { Role = "assistant", Content = $"Error: Server returned status {response.StatusCode}" });
+            }
+        }
+        catch (Exception ex)
+        {
+            messages.Add(new ChatMessageModel { Role = "assistant", Content = $"Exception: {ex.Message}" });
+        }
+        finally
+        {
+            isSubmitting = false;
+            StateHasChanged();
+            await ScrollToBottom();
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval", "window.scrollTo(0, document.body.scrollHeight)");
+        }
+        catch { }
+    }
+}

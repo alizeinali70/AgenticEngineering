@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+  
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgenticEngineering.Application\AgenticEngineering.Application.csproj" />
+    <ProjectReference Include="..\AgenticEngineering.Domain\AgenticEngineering.Domain.csproj" />
+    <ProjectReference Include="..\AgenticEngineering.Infrustructure\AgenticEngineering.Infrustructure.csproj" />
+  </ItemGroup>
+
+</Project>
