@@ -38,5 +38,19 @@ namespace AgenticEngineering.Api.Workspace
             var workspaceDetails = await _workspaceService.GetWorkspaceDetailsAsync(CancellationToken.None);
             return Ok(workspaceDetails);
         }
+
+        [HttpPost("modify-file")]
+        public async Task<IActionResult> ModifyFile([FromBody] ModifyFileRequestDto request, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _workspaceService.ModifyProjectFileAsync(request.ProjectName, request.FilePath, request.OldText, request.NewText, cancellationToken);
+                return Ok(new { Success = true, Message = $"File '{request.FilePath}' updated successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Success = false, Error = ex.Message });
+            }
+        }
     }
 }

@@ -14,10 +14,48 @@ namespace AgenticEngineering.Infrustructure.Workspace
             _workspaceProjectName = options.Value.ProjectName;
             _workspaceDirectory = options.Value.ProjectPath;
         }
-        public Task ModifyProjectFileAsync(string projectName, string relativeFilePath, string oldText, string newText, CancellationToken cancellationToken)
+        public async Task ModifyProjectFileAsync(string projectName, string relativeFilePath, string oldText, string newText, CancellationToken cancellationToken)
         {
-            throw new NotImplementedException();
+            if (string.IsNullOrWhiteSpace(relativeFilePath))
+                throw new ArgumentException("File path is required.", nameof(relativeFilePath));
+
+            var fullPath = Path.Combine(_workspaceDirectory, relativeFilePath);
+
+            // Security check: prevent directory traversal
+            var fullWorkspacePath = Path.GetFullPath(_workspaceDirectory);
+            var fullFilePath = Path.GetFullPath(fullPath);
+            if (!fullFilePath.StartsWith(fullWorkspacePath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UnauthorizedAccessException("Access outside the workspace is not permitted.");
+            }
+
+            if (!File.Exists(fullFilePath))
+            {
+                throw new FileNotFoundException($"File not found: {relativeFilePath}");
+            }
+
+            string fileContent = await File.ReadAllTextAsync(fullFilePath, cancellationToken);
+
+            // If an exact text block match is provided, replace it using explicit StringComparison.
+            if (!string.IsNullOrEmpty(oldText))
+            {
+                // Explicit overload using StringComparison.Ordinal for exact code matching
+                if (!fileContent.Contains(oldText, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("The target text to replace was not found in the file.");
+                }
+
+                // Explicit overload using StringComparison.Ordinal for string replacement
+                fileContent = fileContent.Replace(oldText, newText, StringComparison.Ordinal);
+            }
+            else
+            {
+                fileContent = newText; // Full file replacement (cumulative accumulation state)
+            }
+
+            await File.WriteAllTextAsync(fullFilePath, fileContent, cancellationToken);
         }
+
 
         public async Task<string> ReadProjectFileAsync(string relativeFilePath, CancellationToken cancellationToken)
         {

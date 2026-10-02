@@ -58,12 +58,27 @@
             </div>
 
             <!-- Future Comparison Section Stub -->
+            <!-- Future Comparison Section Stub -->
             <div class="sidebar-section comparison-section-stub">
                 <h3>⚖️ Code Comparison</h3>
                 <div class="workspace-card comparison-card">
                     <p class="stub-description">Ready for future diff implementation between current code and new project variations.</p>
                     <button class="btn-stub-action" disabled>Compare Implementations</button>
                 </div>
+
+                @if (messages.Any(m => m.Role == "assistant"))
+                {
+                    var lastAssistantMsg = messages.LastOrDefault(m => m.Role == "assistant");
+                    if (lastAssistantMsg != null)
+                    {
+                        <div class="workspace-card comparison-card" style="margin-top: 10px;">
+                            <p class="stub-description">Apply latest AI code updates to <strong>@activeTargetFilePath</strong></p>
+                            <button class="btn-sm btn-primary btn-stub-action" @onclick="() => ApplyChangesToAttachedFile(lastAssistantMsg.Content)">
+                                💾 Apply AI Changes to File
+                            </button>
+                        </div>
+                    }
+                }
             </div>
         </aside>
 
@@ -100,7 +115,7 @@
                                 </div>
                                 <div class="content markdown-body">
                                     @msg.Content
-                                </div>
+                                </div>                               
                             </div>
                         }
 
@@ -197,13 +212,15 @@
     private List<string> projectFiles = new();
     private string selectedFile = string.Empty;
 
+    // Track the active destination code file being edited
+    private string activeTargetFilePath = "Program.cs";
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender && !_isInitialized)
         {
             _isInitialized = true;
 
-            // 1. Check Ollama Health
             try
             {
                 isAiRunning = await Http.GetFromJsonAsync<bool>("api/health");
@@ -213,9 +230,7 @@
                 isAiRunning = false;
             }
 
-            // 2. Load Workspace Data
             await LoadWorkspaceMetadataAsync();
-
             StateHasChanged();
         }
     }
@@ -229,6 +244,13 @@
             {
                 projectName = workspaceInfo.ProjectName;
                 projectFiles = workspaceInfo.Files ?? new();
+
+                // Default target to first code file if available, ignoring markdown instruction files
+                var defaultCodeFile = projectFiles.FirstOrDefault(f => f.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrEmpty(defaultCodeFile))
+                {
+                    activeTargetFilePath = defaultCodeFile;
+                }
             }
         }
         catch
@@ -242,21 +264,26 @@
     {
         if (string.IsNullOrEmpty(selectedFile)) return;
 
-        // Prevent duplicate file additions
-        if (attachedFiles.Any(f => f.Name == selectedFile))
+        if (selectedFile.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
         {
+            promptText = $"Selected file '{selectedFile}' is a task guide. Pick a code file (.cs) as your destination target.";
             selectedFile = string.Empty;
             return;
         }
 
+        activeTargetFilePath = selectedFile;
+
         try
         {
+            // ALWAYS fetch the freshest version from disk so it includes prior modifications (like Sum)
             var response = await Http.GetAsync("api/workspace/read-project-file?path=" + Uri.EscapeDataString(selectedFile));
 
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
 
+                // Replace or update attachment list with the latest file content
+                attachedFiles.RemoveAll(f => f.Name == selectedFile);
                 attachedFiles.Add(new AttachedFileItem
                 {
                     Name = selectedFile,
@@ -265,10 +292,10 @@
 
                 if (string.IsNullOrEmpty(promptText))
                 {
-                    promptText = "Please review and modify the selected project files:";
+                    promptText = $"Please update {selectedFile} to add the new task requirements while keeping all existing methods intact.";
                 }
 
-                selectedFile = string.Empty; // Reset dropdown selection for future picks
+                selectedFile = string.Empty;
                 StateHasChanged();
             }
             else
@@ -276,11 +303,8 @@
                 promptText = $"Error loading content for file: {selectedFile} ({response.StatusCode})";
             }
         }
-        catch (Exception ex)
-        {
-            promptText = $"Exception loading file: {ex.Message}";
-        }
-    }
+        catch  { }
+     }
 
     private void SetPrompt(string sampleText)
     {
@@ -295,7 +319,7 @@
 
             try
             {
-                using var stream = file.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024); // 2MB limit per file
+                using var stream = file.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024);
                 using var reader = new StreamReader(stream);
                 var content = await reader.ReadToEndAsync();
 
@@ -304,11 +328,14 @@
                     Name = file.Name,
                     Content = content
                 });
+
+                // If it's a code file, update target destination
+                if (file.Name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                {
+                    activeTargetFilePath = file.Name;
+                }
             }
-            catch (Exception)
-            {
-                // Handle read error if necessary
-            }
+            catch (Exception) { }
         }
         StateHasChanged();
     }
@@ -335,30 +362,27 @@
         var currentPrompt = promptText.Trim();
         string fullMessageContent = currentPrompt;
 
-        if (attachedFiles.Count > 0)
+        var filesSnapshot = new List<AttachedFileItem>(attachedFiles);
+
+        if (filesSnapshot.Count > 0)
         {
             var fileSections = new System.Text.StringBuilder();
-            foreach (var file in attachedFiles)
+            foreach (var file in filesSnapshot)
             {
-                fileSections.AppendLine($"\n\n--- Attached File: {file.Name} ---\n{file.Content}\n----------------------------------");
+                // Explicitly instruct the model that this is the current complete state
+                fileSections.AppendLine($"\n\n--- Current Source Code File [{file.Name}] ---\n{file.Content}\n----------------------------------");
             }
 
             fullMessageContent = string.IsNullOrEmpty(currentPrompt)
-                ? $"Please review the attached files:{fileSections}"
-                : $"{currentPrompt}{fileSections}";
+                ? $"Modify the following source file to add the requested feature. Ensure you retain all existing methods (like Sum, etc.) and output the complete updated file code block:{fileSections}"
+                : $"{currentPrompt}\n\nIMPORTANT: Preserve all existing methods in the file below and output the full updated file code block:{fileSections}";
         }
 
         promptText = string.Empty;
-        var sentFilesCount = attachedFiles.Count;
         attachedFiles.Clear();
-
         isSubmitting = true;
 
-        string displayContent = string.IsNullOrEmpty(currentPrompt)
-            ? $"📄 Attached {sentFilesCount} file(s)"
-            : currentPrompt + (sentFilesCount > 0 ? $" (with {sentFilesCount} attached file(s))" : "");
-
-        messages.Add(new ChatMessageModel { Role = "user", Content = displayContent });
+        messages.Add(new ChatMessageModel { Role = "user", Content = currentPrompt });
         StateHasChanged();
         await ScrollToBottom();
 
@@ -390,6 +414,58 @@
             await ScrollToBottom();
         }
     }
+
+    private async Task ApplyChangesToAttachedFile(string aiReplyContent)
+    {
+        string newCodeContent = aiReplyContent;
+        int firstBacktick = aiReplyContent.IndexOf("```");
+        if (firstBacktick != -1)
+        {
+            int secondBacktick = aiReplyContent.IndexOf("\n", firstBacktick);
+            int endBacktick = aiReplyContent.LastIndexOf("```");
+            if (secondBacktick != -1 && endBacktick > secondBacktick)
+            {
+                newCodeContent = aiReplyContent.Substring(secondBacktick + 1, endBacktick - (secondBacktick + 1)).Trim();
+            }
+        }
+
+        if (activeTargetFilePath.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            activeTargetFilePath = "Program.cs";
+        }
+
+        var payload = new
+        {
+            ProjectName = projectName,
+            FilePath = activeTargetFilePath,
+            OldText = string.Empty,
+            NewText = newCodeContent // Passes the full merged file code block back to disk
+        };
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/workspace/modify-file", payload);
+            if (response.IsSuccessStatusCode)
+            {
+                messages.Add(new ChatMessageModel { Role = "assistant", Content = $"✅ Successfully updated `{activeTargetFilePath}` with all combined methods!" });
+
+                // Refresh local file cache so subsequent prompts see the new methods
+                await OnFileSelected();
+            }
+            else
+            {
+                messages.Add(new ChatMessageModel { Role = "assistant", Content = $"⚠️ Failed to update `{activeTargetFilePath}`." });
+            }
+        }
+        catch (Exception ex)
+        {
+            messages.Add(new ChatMessageModel { Role = "assistant", Content = $"❌ Exception: {ex.Message}" });
+        }
+
+        StateHasChanged();
+        await ScrollToBottom();
+    }
+
 
     private async Task ScrollToBottom()
     {
